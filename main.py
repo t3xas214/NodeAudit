@@ -61,13 +61,10 @@ class ExcelAutomationApp(QMainWindow):
 
         # Build State Dropdown
         self.build_state_dropdown = QComboBox()
+        self.build_state_dropdown.setEditable(True)
         self.build_state_dropdown.addItems(["In Design", "In Progress", "Does Not Exist", "PRO I"])
         layout.addWidget(self.build_state_dropdown, 5, 1)
 
-        # Fetch from PRISM Button
-        self.prism_button = QPushButton("Fetch from PRISM")
-        self.prism_button.clicked.connect(self.fetch_prism_data)
-        layout.addWidget(self.prism_button, 6, 0)
 
         # Save & Next Button
         self.save_next_button = QPushButton("Save & Next")
@@ -118,58 +115,6 @@ class ExcelAutomationApp(QMainWindow):
             self.status_label.setText(f"Loaded: {file_path}")
             QMessageBox.information(self, "Excel Loaded", f"Loaded: {os.path.basename(file_path)}")
 
-    def fetch_prism_data(self):
-        if not self.excel_file_path:
-            self.status_label.setText("Please load an Excel file first.")
-            return
-
-        try:
-            selected_browser = self.load_browser_setting()
-            if selected_browser == "Edge":
-                edge_options = EdgeOptions()
-                edge_options.add_argument("--start-maximized")
-                service = EdgeService(EdgeChromiumDriverManager().install())
-                driver = webdriver.Edge(service=service, options=edge_options)
-            else:
-                from selenium.webdriver.chrome.service import Service as ChromeService
-                from selenium.webdriver.chrome.options import Options as ChromeOptions
-                from webdriver_manager.chrome import ChromeDriverManager
-
-                chrome_options = ChromeOptions()
-                chrome_options.add_argument("--start-maximized")
-                service = ChromeService(ChromeDriverManager().install())
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-
-            driver.get("https://prism.charter.com/")
-
-            for i, pid_input in enumerate(self.pid_inputs):
-                pid = pid_input.text().strip()
-                if not pid:
-                    continue
-
-                try:
-                    search_box = driver.find_element(By.ID, "searchForm:searchPrismId")
-                    search_box.clear()
-                    search_box.send_keys(str(int(pid)))
-                    driver.find_element(By.ID, "searchForm:searchSubmit").click()
-                    time.sleep(4)
-
-                    driver.find_element(By.LINK_TEXT, "Design").click()
-                    time.sleep(2)
-
-                    design_status = driver.find_element(By.XPATH, "//td[contains(text(), 'Design Status')]/following-sibling::td").text.strip()
-                    if design_status in ["In Design", "Design Approved"]:
-                        pid_input.setText(f"{pid} ({design_status})")
-                    else:
-                        pid_input.setText(f"{pid} ({design_status} - Skipped)")
-                except Exception as inner_e:
-                    pid_input.setText(f"{pid} (Error)")
-
-            driver.quit()
-            self.status_label.setText("Fetched PRISM Design Status for visible PIDs.")
-
-        except Exception as e:
-            self.status_label.setText(f"Error: {str(e)}")
 
     def save_next_action(self):
         if not self.excel_file_path:
@@ -189,37 +134,37 @@ class ExcelAutomationApp(QMainWindow):
             col_name = f"PID {i+1}"
             if col_name in headers:
                 col_idx = headers.index(col_name) + 1
-                sheet.cell(row=row, column=col_idx).value = pid_input.text()
+                sheet.cell(row=row, column=col_idx).value = pid_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
 
         # Write Scope
         for i, scope_input in enumerate(self.scope_inputs):
             col_name = f"SCOPE  {i+1}"
             if col_name in headers:
                 col_idx = headers.index(col_name) + 1
-                sheet.cell(row=row, column=col_idx).value = scope_input.text()
+                sheet.cell(row=row, column=col_idx).value = scope_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
 
         # Write Magellan
         for i, mag_input in enumerate(self.magellan_inputs):
             col_name = f"MAGELLAN  {i+1}"
             if col_name in headers:
                 col_idx = headers.index(col_name) + 1
-                sheet.cell(row=row, column=col_idx).value = mag_input.text()
+                sheet.cell(row=row, column=col_idx).value = mag_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
 
         # Write AOI NODE (Config)
         if "AOI NODE" in headers:
             col_idx = headers.index("AOI NODE") + 1
-            sheet.cell(row=row, column=col_idx).value = self.config_dropdown.currentText()
+            sheet.cell(row=row, column=col_idx).value = self.config_dropdown.currentText().strip().replace('\u00A0', '').replace('\u200B', '')
 
         # Write NOTES (Build State)
         if "NOTES" in headers:
             col_idx = headers.index("NOTES") + 1
-            sheet.cell(row=row, column=col_idx).value = self.build_state_dropdown.currentText()
+            sheet.cell(row=row, column=col_idx).value = self.build_state_dropdown.currentText().strip().replace('\u00A0', '').replace('\u200B', '')
 
         for i, node_input in enumerate(self.node_inputs):
             col_name = f"NODE {i+1}"
             if col_name in headers:
                 col_idx = headers.index(col_name) + 1
-                sheet.cell(row=row, column=col_idx).value = node_input.text()
+                sheet.cell(row=row, column=col_idx).value = node_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
 
         # Update labels
         self.last_node_label.setText(f"Last Node: {self.magellan_inputs[0].text()}")
@@ -228,8 +173,6 @@ class ExcelAutomationApp(QMainWindow):
 
         workbook.save(self.excel_file_path)
         QMessageBox.information(self, "Saved", f"Row {row} saved successfully!")
-        # Move to next row
-        self.current_row = row + 1
 
         # Clear inputs
         for input_list in [self.pid_inputs, self.scope_inputs, self.magellan_inputs, self.node_inputs]:
@@ -238,6 +181,9 @@ class ExcelAutomationApp(QMainWindow):
 
         self.config_dropdown.setCurrentIndex(0)
         self.build_state_dropdown.setCurrentIndex(0)
+
+        # Move to next row
+        self.current_row = row + 1
 
     def load_previous_row(self):
         if not self.excel_file_path:
@@ -353,7 +299,8 @@ class ExcelAutomationApp(QMainWindow):
 
         try:
             if sys.platform == "win32":
-                os.system(f'start excel /r "{self.excel_file_path}"')
+                # Use the /r switch with start to explicitly open Excel in read-only mode
+                os.system(f'start "" "EXCEL.EXE" /r "{self.excel_file_path}"')
             elif sys.platform == "darwin":
                 os.system(f'open -a "Microsoft Excel" "{self.excel_file_path}"')
             else:
