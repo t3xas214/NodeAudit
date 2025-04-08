@@ -2,7 +2,7 @@ import sys
 import json
 import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QFileDialog, QLabel, QTextEdit, QComboBox, QGridLayout, QLineEdit
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QProgressBar
 from openpyxl import load_workbook
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -10,12 +10,13 @@ from webdriver_manager.microsoft import EdgeChromiumDriverManager
 from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.edge.options import Options as EdgeOptions
 import time
+import traceback
 
 class ExcelAutomationApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Excel Automation App")
-        self.setGeometry(100, 100, 600, 400)
+        self.setGeometry(100, 100, 800, 500)  # Increased window size
         self.settings_file = "settings.json"
         selected_browser = self.load_browser_setting()
 
@@ -26,9 +27,12 @@ class ExcelAutomationApp(QMainWindow):
         self.load_button = QPushButton("Load Excel File")
         self.load_button.clicked.connect(self.load_excel)
         layout.addWidget(self.load_button, 0, 0)
+        
+        # Browser selection
         self.browser_dropdown = QComboBox()
         self.browser_dropdown.addItems(["Edge", "Chrome"])
-        self.browser_dropdown.setCurrentText(self.load_browser_setting())
+        self.browser_dropdown.setCurrentText(selected_browser)
+        self.browser_dropdown.currentTextChanged.connect(self.save_browser_setting)
         layout.addWidget(self.browser_dropdown, 0, 1)
 
         # PID Inputs
@@ -37,16 +41,17 @@ class ExcelAutomationApp(QMainWindow):
             pid_input.setPlaceholderText(f"PID {i + 1}")
             layout.addWidget(pid_input, 1, i)
 
+        # Node Inputs
+        self.node_inputs = [QLineEdit() for _ in range(4)]
+        for i, node_input in enumerate(self.node_inputs):
+            node_input.setPlaceholderText(f"Node {i + 1}")
+            layout.addWidget(node_input, 2, i)
+
         # Scope Inputs
         self.scope_inputs = [QLineEdit() for _ in range(4)]
         for i, scope_input in enumerate(self.scope_inputs):
             scope_input.setPlaceholderText(f"Scope {i + 1}")
             layout.addWidget(scope_input, 3, i)
-
-        self.node_inputs = [QLineEdit() for _ in range(4)]
-        for i, node_input in enumerate(self.node_inputs):
-            node_input.setPlaceholderText(f"Node {i + 1}")
-            layout.addWidget(node_input, 2, i)
 
         # Magellan Inputs
         self.magellan_inputs = [QLineEdit() for _ in range(4)]
@@ -65,39 +70,50 @@ class ExcelAutomationApp(QMainWindow):
         self.build_state_dropdown.addItems(["In Design", "In Progress", "Does Not Exist", "PRO I"])
         layout.addWidget(self.build_state_dropdown, 5, 1)
 
-
         # Save & Next Button
         self.save_next_button = QPushButton("Save & Next")
         self.save_next_button.clicked.connect(self.save_next_action)
-        layout.addWidget(self.save_next_button, 6, 1)
+        layout.addWidget(self.save_next_button, 6, 0)
 
         # Back Button
         self.back_button = QPushButton("Back")
         self.back_button.clicked.connect(self.load_previous_row)
-        layout.addWidget(self.back_button, 6, 2)
+        layout.addWidget(self.back_button, 6, 1)
+        
+        # Extract PRISM Data Button
+        self.extract_button = QPushButton("Extract PRISM Data")
+        self.extract_button.clicked.connect(self.extract_prism_data)
+        layout.addWidget(self.extract_button, 6, 2)
+        
         self.current_row = None
 
         # Status Label
         self.status_label = QLabel("No file loaded.")
-        layout.addWidget(self.status_label, 7, 0, 1, 2)
+        layout.addWidget(self.status_label, 7, 0, 1, 3)
+
+        # Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar, 8, 0, 1, 3)
 
         self.last_node_label = QLabel("Last Node: N/A")
-        layout.addWidget(self.last_node_label, 8, 0, 1, 2)
+        layout.addWidget(self.last_node_label, 9, 0, 1, 3)
 
         # Row Input and Go Button
         self.row_input = QLineEdit()
         self.row_input.setPlaceholderText("Enter row #")
-        layout.addWidget(self.row_input, 9, 0)
+        layout.addWidget(self.row_input, 10, 0)
 
         self.go_button = QPushButton("Go to Row")
         self.go_button.clicked.connect(self.load_specific_row)
-        layout.addWidget(self.go_button, 9, 1)
+        layout.addWidget(self.go_button, 10, 1)
 
         self.open_excel_button = QPushButton("Open in Excel (Read-Only)")
         self.open_excel_button.clicked.connect(self.open_excel_readonly)
-        layout.addWidget(self.open_excel_button, 10, 0)
+        layout.addWidget(self.open_excel_button, 11, 0)
+        
         self.current_row_label = QLabel("Current Row: N/A")
-        layout.addWidget(self.current_row_label, 11, 0, 1, 2)
+        layout.addWidget(self.current_row_label, 12, 0, 1, 3)
 
         # Main Widget
         container = QWidget()
@@ -111,128 +127,129 @@ class ExcelAutomationApp(QMainWindow):
         # Open file dialog to select Excel file
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Excel File", "", "Excel Files (*.xlsx *.xls)")
         if file_path:
-            self.excel_file_path = file_path
-            self.status_label.setText(f"Loaded: {file_path}")
-            QMessageBox.information(self, "Excel Loaded", f"Loaded: {os.path.basename(file_path)}")
-
+            try:
+                # Try to load the workbook to check if it's valid
+                workbook = load_workbook(file_path, read_only=True)
+                workbook.close()
+                
+                self.excel_file_path = file_path
+                self.status_label.setText(f"Loaded: {file_path}")
+                QMessageBox.information(self, "Excel Loaded", f"Loaded: {os.path.basename(file_path)}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load Excel file: {str(e)}")
 
     def save_next_action(self):
         if not self.excel_file_path:
             self.status_label.setText("No Excel file loaded.")
             return
 
-        workbook = load_workbook(self.excel_file_path)
-        sheet = workbook.active
+        try:
+            workbook = load_workbook(self.excel_file_path)
+            sheet = workbook.active
 
-        headers = [cell.value for cell in sheet[1]]
+            headers = [cell.value for cell in sheet[1]]
 
-        # Decide which row to write to
-        row = self.current_row if self.current_row else sheet.max_row + 1
+            # Decide which row to write to
+            row = self.current_row if self.current_row else sheet.max_row + 1
 
-        # Write PIDs
-        for i, pid_input in enumerate(self.pid_inputs):
-            col_name = f"PID {i+1}"
-            if col_name in headers:
-                col_idx = headers.index(col_name) + 1
-                sheet.cell(row=row, column=col_idx).value = pid_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
+            # Write PIDs
+            for i, pid_input in enumerate(self.pid_inputs):
+                col_name = f"PID {i+1}"
+                if col_name in headers:
+                    col_idx = headers.index(col_name) + 1
+                    sheet.cell(row=row, column=col_idx).value = pid_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
 
-        # Write Scope
-        for i, scope_input in enumerate(self.scope_inputs):
-            col_name = f"SCOPE  {i+1}"
-            if col_name in headers:
-                col_idx = headers.index(col_name) + 1
-                sheet.cell(row=row, column=col_idx).value = scope_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
+            # Write Scope - Fix spacing issue in header name
+            for i, scope_input in enumerate(self.scope_inputs):
+                # Try both with single and double space
+                col_name1 = f"SCOPE {i+1}"
+                col_name2 = f"SCOPE  {i+1}"
+                if col_name1 in headers:
+                    col_idx = headers.index(col_name1) + 1
+                    sheet.cell(row=row, column=col_idx).value = scope_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
+                elif col_name2 in headers:
+                    col_idx = headers.index(col_name2) + 1
+                    sheet.cell(row=row, column=col_idx).value = scope_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
 
-        # Write Magellan
-        for i, mag_input in enumerate(self.magellan_inputs):
-            col_name = f"MAGELLAN  {i+1}"
-            if col_name in headers:
-                col_idx = headers.index(col_name) + 1
-                sheet.cell(row=row, column=col_idx).value = mag_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
+            # Write Magellan - Fix spacing issue in header name
+            for i, mag_input in enumerate(self.magellan_inputs):
+                col_name1 = f"MAGELLAN {i+1}"
+                col_name2 = f"MAGELLAN  {i+1}"
+                if col_name1 in headers:
+                    col_idx = headers.index(col_name1) + 1
+                    sheet.cell(row=row, column=col_idx).value = mag_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
+                elif col_name2 in headers:
+                    col_idx = headers.index(col_name2) + 1
+                    sheet.cell(row=row, column=col_idx).value = mag_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
 
-        # Write AOI NODE (Config)
-        if "AOI NODE" in headers:
-            col_idx = headers.index("AOI NODE") + 1
-            sheet.cell(row=row, column=col_idx).value = self.config_dropdown.currentText().strip().replace('\u00A0', '').replace('\u200B', '')
+            # Write NODE
+            for i, node_input in enumerate(self.node_inputs):
+                col_name = f"NODE {i+1}"
+                if col_name in headers:
+                    col_idx = headers.index(col_name) + 1
+                    sheet.cell(row=row, column=col_idx).value = node_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
 
-        # Write NOTES (Build State)
-        if "NOTES" in headers:
-            col_idx = headers.index("NOTES") + 1
-            sheet.cell(row=row, column=col_idx).value = self.build_state_dropdown.currentText().strip().replace('\u00A0', '').replace('\u200B', '')
+            # Try multiple possible column names for AOI NODE or CONFIG
+            config_value = self.config_dropdown.currentText().strip().replace('\u00A0', '').replace('\u200B', '')
+            for col_name in ["AOI NODE", "CONFIG", "NODE CONFIG"]:
+                if col_name in headers:
+                    col_idx = headers.index(col_name) + 1
+                    sheet.cell(row=row, column=col_idx).value = config_value
+                    break
 
-        for i, node_input in enumerate(self.node_inputs):
-            col_name = f"NODE {i+1}"
-            if col_name in headers:
-                col_idx = headers.index(col_name) + 1
-                sheet.cell(row=row, column=col_idx).value = node_input.text().strip().replace('\u00A0', '').replace('\u200B', '')
+            # Try multiple possible column names for NOTES or BUILD STATE
+            build_state_value = self.build_state_dropdown.currentText().strip().replace('\u00A0', '').replace('\u200B', '')
+            for col_name in ["NOTES", "BUILD STATE", "STATE"]:
+                if col_name in headers:
+                    col_idx = headers.index(col_name) + 1
+                    sheet.cell(row=row, column=col_idx).value = build_state_value
+                    break
 
-        # Update labels
-        self.last_node_label.setText(f"Last Node: {self.magellan_inputs[0].text()}")
-        self.current_row_label.setText(f"Current Row: {row}")
-        self.status_label.setText(f"Saved row {row}")
+            # Update labels
+            self.last_node_label.setText(f"Last Node: {self.magellan_inputs[0].text()}")
+            self.current_row_label.setText(f"Current Row: {row}")
+            self.status_label.setText(f"Saved row {row}")
 
-        workbook.save(self.excel_file_path)
-        QMessageBox.information(self, "Saved", f"Row {row} saved successfully!")
+            workbook.save(self.excel_file_path)
+            QMessageBox.information(self, "Saved", f"Row {row} saved successfully!")
 
-        # Clear inputs
-        for input_list in [self.pid_inputs, self.scope_inputs, self.magellan_inputs, self.node_inputs]:
-            for field in input_list:
-                field.clear()
+            # Clear inputs
+            for input_list in [self.pid_inputs, self.scope_inputs, self.magellan_inputs, self.node_inputs]:
+                for field in input_list:
+                    field.clear()
 
-        self.config_dropdown.setCurrentIndex(0)
-        self.build_state_dropdown.setCurrentIndex(0)
+            self.config_dropdown.setCurrentIndex(0)
+            self.build_state_dropdown.setCurrentIndex(0)
 
-        # Move to next row
-        self.current_row = row + 1
+            # Move to next row
+            self.current_row = row + 1
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save data: {str(e)}")
+            traceback.print_exc()
 
     def load_previous_row(self):
         if not self.excel_file_path:
             self.status_label.setText("No Excel file loaded.")
             return
 
-        workbook = load_workbook(self.excel_file_path)
-        sheet = workbook.active
+        try:
+            workbook = load_workbook(self.excel_file_path)
+            sheet = workbook.active
 
-        if self.current_row is None:
-            self.current_row = sheet.max_row
-        else:
-            self.current_row = max(2, self.current_row - 1)
+            if self.current_row is None:
+                self.current_row = sheet.max_row
+            else:
+                self.current_row = max(2, self.current_row - 1)
 
-        headers = [cell.value for cell in sheet[1]]
-
-        # Load values back into input fields
-        for i in range(4):
-            pid_col = headers.index(f"PID {i+1}") + 1 if f"PID {i+1}" in headers else None
-            if pid_col:
-                self.pid_inputs[i].setText(str(sheet.cell(row=self.current_row, column=pid_col).value or ""))
-
-            scope_col = headers.index(f"SCOPE {i+1}") + 1 if f"SCOPE {i+1}" in headers else None
-            if scope_col:
-                self.scope_inputs[i].setText(str(sheet.cell(row=self.current_row, column=scope_col).value or ""))
-
-            mag_col = headers.index(f"MAGELLAN {i+1}") + 1 if f"MAGELLAN {i+1}" in headers else None
-            if mag_col:
-                self.magellan_inputs[i].setText(str(sheet.cell(row=self.current_row, column=mag_col).value or ""))
-
-            node_col = headers.index(f"NODE {i+1}") + 1 if f"NODE {i+1}" in headers else None
-            if node_col:
-                self.node_inputs[i].setText(str(sheet.cell(row=self.current_row, column=node_col).value or ""))
-
-        config_col = headers.index("CONFIG") + 1 if "CONFIG" in headers else None
-        if config_col:
-            config_value = sheet.cell(row=self.current_row, column=config_col).value
-            if config_value in [self.config_dropdown.itemText(i) for i in range(self.config_dropdown.count())]:
-                self.config_dropdown.setCurrentText(config_value)
-
-        state_col = headers.index("BUILD STATE") + 1 if "BUILD STATE" in headers else None
-        if state_col:
-            state_value = sheet.cell(row=self.current_row, column=state_col).value
-            if state_value in [self.build_state_dropdown.itemText(i) for i in range(self.build_state_dropdown.count())]:
-                self.build_state_dropdown.setCurrentText(state_value)
-
-        self.status_label.setText(f"Loaded previous row: {self.current_row}")
-        self.last_node_label.setText(f"Last Node: {self.magellan_inputs[0].text()}")
-        self.current_row_label.setText(f"Current Row: {self.current_row}")
+            headers = [cell.value for cell in sheet[1]]
+            self.load_row_data(sheet, headers)
+            
+            self.status_label.setText(f"Loaded previous row: {self.current_row}")
+            self.current_row_label.setText(f"Current Row: {self.current_row}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load previous row: {str(e)}")
 
     def load_specific_row(self):
         if not self.excel_file_path:
@@ -245,52 +262,81 @@ class ExcelAutomationApp(QMainWindow):
             self.status_label.setText("Invalid row number.")
             return
 
-        workbook = load_workbook(self.excel_file_path)
-        sheet = workbook.active
+        try:
+            workbook = load_workbook(self.excel_file_path)
+            sheet = workbook.active
 
-        if target_row == 1:
-            QMessageBox.information(self, "Invalid Row", "Row 1 contains headers and cannot be edited.")
-            self.status_label.setText("Row 1 contains headers and cannot be edited.")
-            return
-        elif target_row < 2 or target_row > sheet.max_row:
-            self.status_label.setText("Row number out of range.")
-            return
+            if target_row == 1:
+                QMessageBox.information(self, "Invalid Row", "Row 1 contains headers and cannot be edited.")
+                self.status_label.setText("Row 1 contains headers and cannot be edited.")
+                return
+            elif target_row < 2 or target_row > sheet.max_row:
+                self.status_label.setText("Row number out of range.")
+                return
 
-        self.current_row = target_row
-        headers = [cell.value for cell in sheet[1]]
+            self.current_row = target_row
+            headers = [cell.value for cell in sheet[1]]
+            
+            self.load_row_data(sheet, headers)
+            
+            self.status_label.setText(f"Loaded row: {self.current_row}")
+            self.current_row_label.setText(f"Current Row: {self.current_row}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load row {target_row}: {str(e)}")
 
+    def load_row_data(self, sheet, headers):
+        """Helper method to load data from the current row into the input fields"""
+        # Load values back into input fields
         for i in range(4):
-            pid_col = headers.index(f"PID {i+1}") + 1 if f"PID {i+1}" in headers else None
-            if pid_col:
-                self.pid_inputs[i].setText(str(sheet.cell(row=self.current_row, column=pid_col).value or ""))
+            # Get PID values
+            for col_name in [f"PID {i+1}"]:
+                if col_name in headers:
+                    col_idx = headers.index(col_name) + 1
+                    self.pid_inputs[i].setText(str(sheet.cell(row=self.current_row, column=col_idx).value or ""))
 
-            scope_col = headers.index(f"SCOPE {i+1}") + 1 if f"SCOPE {i+1}" in headers else None
-            if scope_col:
-                self.scope_inputs[i].setText(str(sheet.cell(row=self.current_row, column=scope_col).value or ""))
+            # Get Scope values - try both spacing variants
+            for col_name in [f"SCOPE {i+1}", f"SCOPE  {i+1}"]:
+                if col_name in headers:
+                    col_idx = headers.index(col_name) + 1
+                    self.scope_inputs[i].setText(str(sheet.cell(row=self.current_row, column=col_idx).value or ""))
 
-            mag_col = headers.index(f"MAGELLAN {i+1}") + 1 if f"MAGELLAN {i+1}" in headers else None
-            if mag_col:
-                self.magellan_inputs[i].setText(str(sheet.cell(row=self.current_row, column=mag_col).value or ""))
+            # Get Magellan values - try both spacing variants
+            for col_name in [f"MAGELLAN {i+1}", f"MAGELLAN  {i+1}"]:
+                if col_name in headers:
+                    col_idx = headers.index(col_name) + 1
+                    self.magellan_inputs[i].setText(str(sheet.cell(row=self.current_row, column=col_idx).value or ""))
 
-            node_col = headers.index(f"NODE {i+1}") + 1 if f"NODE {i+1}" in headers else None
-            if node_col:
-                self.node_inputs[i].setText(str(sheet.cell(row=self.current_row, column=node_col).value or ""))
+            # Get Node values
+            for col_name in [f"NODE {i+1}"]:
+                if col_name in headers:
+                    col_idx = headers.index(col_name) + 1
+                    self.node_inputs[i].setText(str(sheet.cell(row=self.current_row, column=col_idx).value or ""))
 
-        config_col = headers.index("CONFIG") + 1 if "CONFIG" in headers else None
-        if config_col:
-            config_value = sheet.cell(row=self.current_row, column=config_col).value
-            if config_value in [self.config_dropdown.itemText(i) for i in range(self.config_dropdown.count())]:
-                self.config_dropdown.setCurrentText(config_value)
+        # Try multiple column names for CONFIG
+        config_found = False
+        for config_col_name in ["CONFIG", "AOI NODE", "NODE CONFIG"]:
+            if config_col_name in headers:
+                col_idx = headers.index(config_col_name) + 1
+                config_value = sheet.cell(row=self.current_row, column=col_idx).value
+                if config_value in [self.config_dropdown.itemText(i) for i in range(self.config_dropdown.count())]:
+                    self.config_dropdown.setCurrentText(str(config_value))
+                    config_found = True
+                    break
 
-        state_col = headers.index("BUILD STATE") + 1 if "BUILD STATE" in headers else None
-        if state_col:
-            state_value = sheet.cell(row=self.current_row, column=state_col).value
-            if state_value in [self.build_state_dropdown.itemText(i) for i in range(self.build_state_dropdown.count())]:
-                self.build_state_dropdown.setCurrentText(state_value)
+        # Try multiple column names for BUILD STATE
+        state_found = False
+        for state_col_name in ["BUILD STATE", "NOTES", "STATE"]:
+            if state_col_name in headers:
+                col_idx = headers.index(state_col_name) + 1
+                state_value = sheet.cell(row=self.current_row, column=col_idx).value
+                if state_value:
+                    self.build_state_dropdown.setCurrentText(str(state_value))
+                    state_found = True
+                    break
 
-        self.status_label.setText(f"Loaded row: {self.current_row}")
+        # Update node label
         self.last_node_label.setText(f"Last Node: {self.magellan_inputs[0].text()}")
-        self.current_row_label.setText(f"Current Row: {self.current_row}")
 
     def open_excel_readonly(self):
         if not self.excel_file_path:
@@ -309,6 +355,7 @@ class ExcelAutomationApp(QMainWindow):
             self.status_label.setText("Opened Excel in read-only mode.")
         except Exception as e:
             self.status_label.setText(f"Failed to open Excel: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to open Excel: {str(e)}")
 
     def extract_prism_data(self):
         if not self.excel_file_path:
@@ -316,6 +363,10 @@ class ExcelAutomationApp(QMainWindow):
             return
 
         try:
+            # Show progress bar
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            
             selected_browser = self.browser_dropdown.currentText()
             if selected_browser == "Edge":
                 edge_options = EdgeOptions()
@@ -332,10 +383,12 @@ class ExcelAutomationApp(QMainWindow):
                 service = ChromeService(ChromeDriverManager().install())
                 driver = webdriver.Chrome(service=service, options=chrome_options)
 
+            self.status_label.setText("Opening PRISM website...")
             driver.get("https://prism.charter.com/")
+            QApplication.processEvents()  # Process UI events to update status
 
             workbook = load_workbook(self.excel_file_path)
-            for sheet_name in workbook.sheetnames:
+            for sheet_idx, sheet_name in enumerate(workbook.sheetnames):
                 sheet = workbook[sheet_name]
 
                 # Ensure headers for new columns
@@ -346,67 +399,111 @@ class ExcelAutomationApp(QMainWindow):
                         sheet.cell(row=1, column=len(headers) + 1, value=status_col)
                         headers.append(status_col)
 
+                # Count total PIDs to process for progress bar
+                total_pids = 0
                 for row in range(2, sheet.max_row + 1):
                     for i in range(1, 5):
-                        pid_cell = sheet.cell(row=row, column=headers.index(f"PID {i}") + 1)
-                        status_cell = sheet.cell(row=row, column=headers.index(f"DESIGN STATUS {i}") + 1)
+                        pid_col_name = f"PID {i}"
+                        if pid_col_name in headers:
+                            pid_col = headers.index(pid_col_name) + 1
+                            pid = sheet.cell(row=row, column=pid_col).value
+                            if pid:
+                                total_pids += 1
+                
+                processed_pids = 0
+                self.progress_bar.setMaximum(total_pids if total_pids > 0 else 100)
 
-                        pid = pid_cell.value
-                        if not pid:
-                            continue
+                for row in range(2, sheet.max_row + 1):
+                    for i in range(1, 5):
+                        pid_col_name = f"PID {i}"
+                        if pid_col_name in headers:
+                            pid_col = headers.index(pid_col_name) + 1
+                            status_col_name = f"DESIGN STATUS {i}"
+                            if status_col_name in headers:
+                                status_col = headers.index(status_col_name) + 1
+                            else:
+                                continue  # Skip if no matching status column
 
-                        try:
-                            search_box = driver.find_element(By.ID, "searchForm:searchPrismId")
-                            search_box.clear()
-                            search_box.send_keys(str(int(pid)))
-                            driver.find_element(By.ID, "searchForm:searchSubmit").click()
-                            time.sleep(4)
+                            pid_cell = sheet.cell(row=row, column=pid_col)
+                            status_cell = sheet.cell(row=row, column=status_col)
 
-                            driver.find_element(By.LINK_TEXT, "Design").click()
-                            time.sleep(2)
+                            pid = pid_cell.value
+                            if not pid:
+                                continue
 
-                            design_status = driver.find_element(By.XPATH, "//td[contains(text(), 'Design Status')]/following-sibling::td").text.strip()
-                            status_cell.value = design_status
-                        except Exception as inner_e:
-                            status_cell.value = f"Error: {str(inner_e)}"
+                            try:
+                                self.status_label.setText(f"Processing PID {pid}...")
+                                QApplication.processEvents()  # Update UI
+                                
+                                search_box = driver.find_element(By.ID, "searchForm:searchPrismId")
+                                search_box.clear()
+                                search_box.send_keys(str(int(pid)))
+                                driver.find_element(By.ID, "searchForm:searchSubmit").click()
+                                time.sleep(4)
+
+                                driver.find_element(By.LINK_TEXT, "Design").click()
+                                time.sleep(2)
+
+                                design_status = driver.find_element(By.XPATH, "//td[contains(text(), 'Design Status')]/following-sibling::td").text.strip()
+                                status_cell.value = design_status
+                                
+                                processed_pids += 1
+                                self.progress_bar.setValue(processed_pids)
+                                QApplication.processEvents()  # Update UI
+                                
+                            except Exception as inner_e:
+                                status_cell.value = f"Error: {str(inner_e)}"
 
             workbook.save(self.excel_file_path)
             driver.quit()
             self.status_label.setText(f"PRISM data written to: {self.excel_file_path}")
+            self.progress_bar.setVisible(False)
+            QMessageBox.information(self, "Complete", "PRISM data extraction complete!")
 
         except Exception as e:
             self.status_label.setText(f"Error: {str(e)}")
+            self.progress_bar.setVisible(False)
+            QMessageBox.critical(self, "Error", f"Failed to extract PRISM data: {str(e)}\n{traceback.format_exc()}")
 
     def write_to_excel(self, data_rows):
         if not self.excel_file_path:
             self.status_label.setText("No Excel file loaded.")
             return
 
-        workbook = load_workbook(self.excel_file_path)
-        sheet = workbook.active
+        try:
+            workbook = load_workbook(self.excel_file_path)
+            sheet = workbook.active
 
-        sheet["A1"] = "PRISM ID"
-        sheet["B1"] = "Node"
-        sheet["C1"] = "Design Status"
+            sheet["A1"] = "PRISM ID"
+            sheet["B1"] = "Node"
+            sheet["C1"] = "Design Status"
 
-        for i, row in enumerate(data_rows, start=2):
-            sheet[f"A{i}"] = row[0]
-            sheet[f"B{i}"] = row[1]
-            sheet[f"C{i}"] = row[2]
+            for i, row in enumerate(data_rows, start=2):
+                sheet[f"A{i}"] = row[0]
+                sheet[f"B{i}"] = row[1]
+                sheet[f"C{i}"] = row[2]
 
-        workbook.save(self.excel_file_path)
-        self.status_label.setText(f"Data written to: {self.excel_file_path}")
+            workbook.save(self.excel_file_path)
+            self.status_label.setText(f"Data written to: {self.excel_file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to write data: {str(e)}")
 
     def save_browser_setting(self):
         settings = {"browser": self.browser_dropdown.currentText()}
-        with open(self.settings_file, "w") as f:
-            json.dump(settings, f)
+        try:
+            with open(self.settings_file, "w") as f:
+                json.dump(settings, f)
+        except Exception as e:
+            print(f"Failed to save browser setting: {e}")
 
     def load_browser_setting(self):
         if os.path.exists(self.settings_file):
-            with open(self.settings_file, "r") as f:
-                settings = json.load(f)
-                return settings.get("browser", "Edge")
+            try:
+                with open(self.settings_file, "r") as f:
+                    settings = json.load(f)
+                    return settings.get("browser", "Edge")
+            except Exception as e:
+                print(f"Failed to load browser setting: {e}")
         return "Edge"
 
 # Run the app
