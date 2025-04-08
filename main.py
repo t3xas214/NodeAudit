@@ -2,14 +2,10 @@ import sys
 import json
 import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QFileDialog, QLabel, QTextEdit, QComboBox, QGridLayout, QLineEdit
-from PyQt5.QtWidgets import QMessageBox, QProgressBar
+from PyQt5.QtWidgets import QMessageBox, QStyleFactory
+from PyQt5.QtGui import QPalette, QColor
+from PyQt5.QtCore import Qt
 from openpyxl import load_workbook
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from webdriver_manager.microsoft import EdgeChromiumDriverManager
-from selenium.webdriver.edge.service import Service as EdgeService
-from selenium.webdriver.edge.options import Options as EdgeOptions
-import time
 import traceback
 
 class ExcelAutomationApp(QMainWindow):
@@ -17,8 +13,9 @@ class ExcelAutomationApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Excel Automation App")
         self.setGeometry(100, 100, 800, 500)  # Increased window size
-        self.settings_file = "settings.json"
-        selected_browser = self.load_browser_setting()
+        
+        # Set up theme
+        self.setup_theme()
 
         # Layout
         layout = QGridLayout()
@@ -27,13 +24,6 @@ class ExcelAutomationApp(QMainWindow):
         self.load_button = QPushButton("Load Excel File")
         self.load_button.clicked.connect(self.load_excel)
         layout.addWidget(self.load_button, 0, 0)
-        
-        # Browser selection
-        self.browser_dropdown = QComboBox()
-        self.browser_dropdown.addItems(["Edge", "Chrome"])
-        self.browser_dropdown.setCurrentText(selected_browser)
-        self.browser_dropdown.currentTextChanged.connect(self.save_browser_setting)
-        layout.addWidget(self.browser_dropdown, 0, 1)
 
         # PID Inputs
         self.pid_inputs = [QLineEdit() for _ in range(4)]
@@ -80,40 +70,35 @@ class ExcelAutomationApp(QMainWindow):
         self.back_button.clicked.connect(self.load_previous_row)
         layout.addWidget(self.back_button, 6, 1)
         
-        # Extract PRISM Data Button
-        self.extract_button = QPushButton("Extract PRISM Data")
-        self.extract_button.clicked.connect(self.extract_prism_data)
-        layout.addWidget(self.extract_button, 6, 2)
-        
         self.current_row = None
 
         # Status Label
         self.status_label = QLabel("No file loaded.")
         layout.addWidget(self.status_label, 7, 0, 1, 3)
 
-        # Progress Bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar, 8, 0, 1, 3)
-
         self.last_node_label = QLabel("Last Node: N/A")
-        layout.addWidget(self.last_node_label, 9, 0, 1, 3)
+        layout.addWidget(self.last_node_label, 8, 0, 1, 3)
 
         # Row Input and Go Button
         self.row_input = QLineEdit()
         self.row_input.setPlaceholderText("Enter row #")
-        layout.addWidget(self.row_input, 10, 0)
+        layout.addWidget(self.row_input, 9, 0)
 
         self.go_button = QPushButton("Go to Row")
         self.go_button.clicked.connect(self.load_specific_row)
-        layout.addWidget(self.go_button, 10, 1)
+        layout.addWidget(self.go_button, 9, 1)
 
         self.open_excel_button = QPushButton("Open in Excel (Read-Only)")
         self.open_excel_button.clicked.connect(self.open_excel_readonly)
-        layout.addWidget(self.open_excel_button, 11, 0)
+        layout.addWidget(self.open_excel_button, 10, 0)
         
         self.current_row_label = QLabel("Current Row: N/A")
-        layout.addWidget(self.current_row_label, 12, 0, 1, 3)
+        layout.addWidget(self.current_row_label, 11, 0, 1, 3)
+
+        # Toggle Dark Mode Button
+        self.toggle_dark_mode_button = QPushButton("Toggle Dark Mode")
+        self.toggle_dark_mode_button.clicked.connect(self.toggle_dark_mode)
+        layout.addWidget(self.toggle_dark_mode_button, 6, 2)
 
         # Main Widget
         container = QWidget()
@@ -122,6 +107,68 @@ class ExcelAutomationApp(QMainWindow):
 
         # Placeholder for Excel file path
         self.excel_file_path = None
+
+    def setup_theme(self, dark_mode=False):
+        app = QApplication.instance()
+        palette = QPalette()
+
+        if dark_mode:
+            # Dark mode settings
+            palette.setColor(QPalette.Window, QColor(53, 53, 53))
+            palette.setColor(QPalette.WindowText, Qt.white)
+            palette.setColor(QPalette.Base, QColor(35, 35, 35))
+            palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+            palette.setColor(QPalette.ToolTipBase, QColor(25, 25, 25))
+            palette.setColor(QPalette.ToolTipText, Qt.white)
+            palette.setColor(QPalette.Text, Qt.white)
+            palette.setColor(QPalette.Button, QColor(53, 53, 53))
+            palette.setColor(QPalette.ButtonText, Qt.white)
+            palette.setColor(QPalette.BrightText, Qt.red)
+            palette.setColor(QPalette.Link, QColor(42, 130, 218))
+            palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+            palette.setColor(QPalette.HighlightedText, QColor(35, 35, 35))
+            
+            # Set the dark style sheet for QComboBox and QLineEdit
+            self.setStyleSheet("""
+                QComboBox {
+                    background-color: #353535;
+                    color: white;
+                    border: 1px solid #555555;
+                    padding: 5px;
+                }
+                QComboBox:drop-down {
+                    border: 1px solid #555555;
+                }
+                QComboBox:down-arrow {
+                    width: 15px;
+                    height: 15px;
+                }
+                QLineEdit {
+                    background-color: #353535;
+                    color: white;
+                    border: 1px solid #555555;
+                    padding: 5px;
+                }
+                QPushButton {
+                    background-color: #454545;
+                    color: white;
+                    border: 1px solid #555555;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #555555;
+                }
+                QPushButton:pressed {
+                    background-color: #252525;
+                }
+            """)
+        else:
+            # Light mode settings
+            palette = app.style().standardPalette()
+            self.setStyleSheet("")
+
+        app.setPalette(palette)
 
     def load_excel(self):
         # Open file dialog to select Excel file
@@ -357,154 +404,10 @@ class ExcelAutomationApp(QMainWindow):
             self.status_label.setText(f"Failed to open Excel: {e}")
             QMessageBox.critical(self, "Error", f"Failed to open Excel: {str(e)}")
 
-    def extract_prism_data(self):
-        if not self.excel_file_path:
-            self.status_label.setText("Please load an Excel file first.")
-            return
-
-        try:
-            # Show progress bar
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(0)
-            
-            selected_browser = self.browser_dropdown.currentText()
-            if selected_browser == "Edge":
-                edge_options = EdgeOptions()
-                edge_options.add_argument("--start-maximized")
-                service = EdgeService(EdgeChromiumDriverManager().install())
-                driver = webdriver.Edge(service=service, options=edge_options)
-            else:  # Chrome
-                from selenium.webdriver.chrome.service import Service as ChromeService
-                from selenium.webdriver.chrome.options import Options as ChromeOptions
-                from webdriver_manager.chrome import ChromeDriverManager
-
-                chrome_options = ChromeOptions()
-                chrome_options.add_argument("--start-maximized")
-                service = ChromeService(ChromeDriverManager().install())
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-
-            self.status_label.setText("Opening PRISM website...")
-            driver.get("https://prism.charter.com/")
-            QApplication.processEvents()  # Process UI events to update status
-
-            workbook = load_workbook(self.excel_file_path)
-            for sheet_idx, sheet_name in enumerate(workbook.sheetnames):
-                sheet = workbook[sheet_name]
-
-                # Ensure headers for new columns
-                headers = [cell.value for cell in sheet[1]]
-                for i in range(1, 5):
-                    status_col = f"DESIGN STATUS {i}"
-                    if status_col not in headers:
-                        sheet.cell(row=1, column=len(headers) + 1, value=status_col)
-                        headers.append(status_col)
-
-                # Count total PIDs to process for progress bar
-                total_pids = 0
-                for row in range(2, sheet.max_row + 1):
-                    for i in range(1, 5):
-                        pid_col_name = f"PID {i}"
-                        if pid_col_name in headers:
-                            pid_col = headers.index(pid_col_name) + 1
-                            pid = sheet.cell(row=row, column=pid_col).value
-                            if pid:
-                                total_pids += 1
-                
-                processed_pids = 0
-                self.progress_bar.setMaximum(total_pids if total_pids > 0 else 100)
-
-                for row in range(2, sheet.max_row + 1):
-                    for i in range(1, 5):
-                        pid_col_name = f"PID {i}"
-                        if pid_col_name in headers:
-                            pid_col = headers.index(pid_col_name) + 1
-                            status_col_name = f"DESIGN STATUS {i}"
-                            if status_col_name in headers:
-                                status_col = headers.index(status_col_name) + 1
-                            else:
-                                continue  # Skip if no matching status column
-
-                            pid_cell = sheet.cell(row=row, column=pid_col)
-                            status_cell = sheet.cell(row=row, column=status_col)
-
-                            pid = pid_cell.value
-                            if not pid:
-                                continue
-
-                            try:
-                                self.status_label.setText(f"Processing PID {pid}...")
-                                QApplication.processEvents()  # Update UI
-                                
-                                search_box = driver.find_element(By.ID, "searchForm:searchPrismId")
-                                search_box.clear()
-                                search_box.send_keys(str(int(pid)))
-                                driver.find_element(By.ID, "searchForm:searchSubmit").click()
-                                time.sleep(4)
-
-                                driver.find_element(By.LINK_TEXT, "Design").click()
-                                time.sleep(2)
-
-                                design_status = driver.find_element(By.XPATH, "//td[contains(text(), 'Design Status')]/following-sibling::td").text.strip()
-                                status_cell.value = design_status
-                                
-                                processed_pids += 1
-                                self.progress_bar.setValue(processed_pids)
-                                QApplication.processEvents()  # Update UI
-                                
-                            except Exception as inner_e:
-                                status_cell.value = f"Error: {str(inner_e)}"
-
-            workbook.save(self.excel_file_path)
-            driver.quit()
-            self.status_label.setText(f"PRISM data written to: {self.excel_file_path}")
-            self.progress_bar.setVisible(False)
-            QMessageBox.information(self, "Complete", "PRISM data extraction complete!")
-
-        except Exception as e:
-            self.status_label.setText(f"Error: {str(e)}")
-            self.progress_bar.setVisible(False)
-            QMessageBox.critical(self, "Error", f"Failed to extract PRISM data: {str(e)}\n{traceback.format_exc()}")
-
-    def write_to_excel(self, data_rows):
-        if not self.excel_file_path:
-            self.status_label.setText("No Excel file loaded.")
-            return
-
-        try:
-            workbook = load_workbook(self.excel_file_path)
-            sheet = workbook.active
-
-            sheet["A1"] = "PRISM ID"
-            sheet["B1"] = "Node"
-            sheet["C1"] = "Design Status"
-
-            for i, row in enumerate(data_rows, start=2):
-                sheet[f"A{i}"] = row[0]
-                sheet[f"B{i}"] = row[1]
-                sheet[f"C{i}"] = row[2]
-
-            workbook.save(self.excel_file_path)
-            self.status_label.setText(f"Data written to: {self.excel_file_path}")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to write data: {str(e)}")
-
-    def save_browser_setting(self):
-        settings = {"browser": self.browser_dropdown.currentText()}
-        try:
-            with open(self.settings_file, "w") as f:
-                json.dump(settings, f)
-        except Exception as e:
-            print(f"Failed to save browser setting: {e}")
-
-    def load_browser_setting(self):
-        if os.path.exists(self.settings_file):
-            try:
-                with open(self.settings_file, "r") as f:
-                    settings = json.load(f)
-                    return settings.get("browser", "Edge")
-            except Exception as e:
-                print(f"Failed to load browser setting: {e}")
-        return "Edge"
+    def toggle_dark_mode(self):
+        current_palette = QApplication.instance().palette()
+        is_dark_mode = current_palette.color(QPalette.Window).lightness() < 128
+        self.setup_theme(not is_dark_mode)  # Toggle the theme
 
 # Run the app
 if __name__ == "__main__":
