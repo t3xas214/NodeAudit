@@ -1,12 +1,10 @@
 # NodeAudit Excel Automation Tool
 
-A PyQt5-based desktop application for managing and automating Excel data entry and PRISM data extraction.
+A PyQt5-based desktop application for managing and automating Excel data entry
 
 ## Features
 
-- Excel file loading and manipulation
-- Automated PRISM data extraction
-- Support for multiple browsers (Edge and Chrome)
+
 - Configurable data entry for PIDs, Nodes, Scopes, and Magellan data
 - Progress tracking and error handling
 - Read-only Excel file viewing
