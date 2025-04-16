@@ -51,13 +51,13 @@ class ExcelAutomationApp(QMainWindow):
 
         # Config Dropdown
         self.config_dropdown = QComboBox()
-        self.config_dropdown.addItems(["1x1", "2x2", "4x4"])
+        self.config_dropdown.addItems(["1x1", "2x2", "4x4", "N/A"])
         layout.addWidget(self.config_dropdown, 5, 0)
 
         # Build State Dropdown
         self.build_state_dropdown = QComboBox()
         self.build_state_dropdown.setEditable(True)
-        self.build_state_dropdown.addItems(["In Design", "In Progress", "Does Not Exist", "PRO I"])
+        self.build_state_dropdown.addItems(["In Design", "In Progress", "Does Not Exist", "PRO-I", "Design Approved"])
         layout.addWidget(self.build_state_dropdown, 5, 1)
 
         # Save & Next Button
