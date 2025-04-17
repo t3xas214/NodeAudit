@@ -550,43 +550,20 @@ class ExcelAutomationApp(QMainWindow):
             nav_bar.addWidget(go_button)
             layout.addLayout(nav_bar)
             layout.addWidget(self.web_view)
+            # Add manual scrape button for debugging
+            scrape_button = QPushButton("Scrape Now")
+            scrape_button.clicked.connect(self.check_status)
+            layout.addWidget(scrape_button)
             self.browser_window.setCentralWidget(main_widget)
-            # Apply dark mode to browser window controls if enabled
-            if QApplication.instance().palette().color(QPalette.Window).lightness() < 128:
-                self.browser_window.setStyleSheet("""
-                    QMainWindow, QWidget {
-                        background-color: #232323;
-                        color: #fff;
-                    }
-                    QLabel {
-                        color: #fff;
-                    }
-                    QLineEdit {
-                        background-color: #353535;
-                        color: white;
-                        border: 1px solid #555555;
-                        padding: 5px;
-                    }
-                    QPushButton {
-                        background-color: #454545;
-                        color: white;
-                        border: 1px solid #555555;
-                        padding: 5px;
-                        border-radius: 3px;
-                    }
-                    QPushButton:hover {
-                        background-color: #555555;
-                    }
-                    QPushButton:pressed {
-                        background-color: #252525;
-                    }
-                """)
+            # WebChannel setup BEFORE loading the page
             self.bridge = Bridge(self)
             self.web_view.page().setWebChannel(self.channel)
             self.channel.registerObject('bridge', self.bridge)
+            # Load the page
             prism_url = "https://www.google.com"
             self.web_view.setUrl(QUrl(prism_url))
             self.web_view.loadFinished.connect(self.inject_dark_css_if_needed)
+            # Timer for auto-scraping
             self.timer = QTimer()
             self.timer.timeout.connect(self.check_status)
             self.timer.start(5000)
@@ -633,21 +610,18 @@ class ExcelAutomationApp(QMainWindow):
         self.web_view.setUrl(QUrl(url))
 
     def check_status(self):
-        """Periodically check the design status"""
+        print("check_status called")  # Debug print
         js_code = """
         (function() {
             function extractStatus() {
-                // Find all form labels and their values
                 const labels = document.querySelectorAll('td.formLabel');
                 let pid = '';
                 let node = '';
                 let status = '';
-                
                 for (const label of labels) {
                     const labelText = label.textContent.trim();
                     const valueCell = label.nextElementSibling;
                     const value = valueCell ? valueCell.textContent.trim() : '';
-                    
                     if (labelText.includes('PID')) {
                         pid = value;
                     } else if (labelText.includes('Node')) {
@@ -656,8 +630,6 @@ class ExcelAutomationApp(QMainWindow):
                         status = value;
                     }
                 }
-                
-                // Check if we found all required information
                 if (pid && node) {
                     if (status.toLowerCase().includes('design approved')) {
                         return `✅ Design Approved | PID: ${pid} | Node: ${node}`;
@@ -667,12 +639,8 @@ class ExcelAutomationApp(QMainWindow):
                         return `❌ Design Rejected | PID: ${pid} | Node: ${node}`;
                     }
                 }
-                
-                // Fallback if we can't find the design tab
                 return 'IN_PROGRESS_FALLBACK';
             }
-            
-            // Send status back to Python
             if (typeof bridge !== 'undefined') {
                 bridge.receiveStatus(extractStatus());
             }
