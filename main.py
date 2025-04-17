@@ -508,23 +508,59 @@ class ExcelAutomationApp(QMainWindow):
         self.setup_theme(not is_dark_mode)  # Toggle the theme
 
     def open_browser(self):
-        selected_browser = self.browser_dropdown.currentText().lower()
-        
-        # =============================================
-        # PRISM URL CONFIGURATION
-        # Update this URL to match your work environment
-        # Make sure you're connected to work VPN if accessing remotely
-        # =============================================
-        prism_url = "https://prism.charte.com/prism/prism-welcome.action"
-        
-        if selected_browser == "edge":
-            # For Edge, we'll use the system's default browser registration
-            webbrowser.register('edge', None, webbrowser.GenericBrowser('open -a "Microsoft Edge" %s'))
-            webbrowser.get('edge').open(prism_url)
-        elif selected_browser == "chrome":
-            # For Chrome, we'll use the system's default browser registration
-            webbrowser.register('chrome', None, webbrowser.GenericBrowser('open -a "Google Chrome" %s'))
-            webbrowser.get('chrome').open(prism_url)
+        try:
+            selected_browser = self.browser_dropdown.currentText().lower()
+            
+            # =============================================
+            # PRISM URL CONFIGURATION
+            # Update this URL to match your work environment
+            # Make sure you're connected to work VPN if accessing remotely
+            # =============================================
+            prism_url = "https://prism.charte.com/prism/prism-welcome.action"
+            
+            # Detect operating system
+            is_windows = sys.platform.startswith('win')
+            
+            if selected_browser == "edge":
+                try:
+                    if is_windows:
+                        # Windows command for Edge
+                        os.system(f'start msedge "{prism_url}"')
+                    else:
+                        # macOS command for Edge
+                        os.system(f'open -a "Microsoft Edge" "{prism_url}"')
+                except Exception as e:
+                    # Fallback to webbrowser module
+                    if is_windows:
+                        edge_path = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+                        webbrowser.register('edge', None, webbrowser.BackgroundBrowser(edge_path))
+                    else:
+                        webbrowser.register('edge', None)
+                    webbrowser.get('edge').open(prism_url)
+                    
+            elif selected_browser == "chrome":
+                try:
+                    if is_windows:
+                        # Windows command for Chrome
+                        os.system(f'start chrome "{prism_url}"')
+                    else:
+                        # macOS command for Chrome
+                        os.system(f'open -a "Google Chrome" "{prism_url}"')
+                except Exception as e:
+                    # Fallback to webbrowser module
+                    if is_windows:
+                        chrome_path = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+                        webbrowser.register('chrome', None, webbrowser.BackgroundBrowser(chrome_path))
+                    else:
+                        webbrowser.register('chrome', None)
+                    webbrowser.get('chrome').open(prism_url)
+            
+            self.status_label.setText(f"Opening {selected_browser.title()}...")
+            
+        except Exception as e:
+            error_msg = f"Failed to open browser: {str(e)}"
+            self.status_label.setText(error_msg)
+            QMessageBox.critical(self, "Browser Error", error_msg)
 
 # Run the app
 if __name__ == "__main__":
