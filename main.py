@@ -1,12 +1,103 @@
 import sys
 import json
 import os
+import webbrowser
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QFileDialog, QLabel, QTextEdit, QComboBox, QGridLayout, QLineEdit
 from PyQt5.QtWidgets import QMessageBox, QStyleFactory
 from PyQt5.QtGui import QPalette, QColor
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSlot, QUrl
+from PyQt5.QtWebEngineWidgets import QWebEngineView
 from openpyxl import load_workbook
 import traceback
+
+class Bridge:
+    def __init__(self, parent=None):
+        super().__init__()
+        self.parent = lambda: parent
+        self.status_label = parent.status_label if parent else None
+
+    @pyqtSlot(str)
+    def receiveStatus(self, status):
+        if not self.status_label:
+            return
+            
+        self.status_label.setText(f"Design Status: {status}")
+
+        # Case 1: Design Approved
+        if self.parent() and hasattr(self.parent(), 'design_approved_detected'):
+            if status == "✅ Design Approved":
+                self.parent().design_approved_detected.emit()
+
+        # Case 2: Design tab missing (fallback)
+        if status == "IN_PROGRESS_FALLBACK":
+            dropdown = self.parent().build_state_dropdown
+            index = dropdown.findText("In Progress")
+            if index != -1:
+                dropdown.setCurrentIndex(index)
+            else:
+                dropdown.addItem("In Progress")
+                dropdown.setCurrentText("In Progress")
+            self.status_label.setText("⚠️ Design tab not found — defaulted to In Progress")
+
+        # Case 3: Structured status with PID + Node
+        if "|" in status:
+            # Expecting: "✅ Design Approved | PID: 123456 | Node: D209 - D209"
+            parts = status.split("|")
+            pid_value = ""
+            node_value = ""
+
+            for part in parts:
+                if "PID:" in part:
+                    pid_value = part.split("PID:")[1].strip()
+                elif "Node:" in part:
+                    node_value = part.split("Node:")[1].strip()
+
+            # Fill first empty PID + Node field
+            for i in range(4):
+                if not self.parent().pid_inputs[i].text().strip():
+                    self.parent().pid_inputs[i].setText(pid_value)
+                    self.parent().node_inputs[i].setText(node_value)
+                    break
+
+class PrismBrowser(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Prism Browser")
+        self.setGeometry(100, 100, 1200, 800)
+        self.browser = None
+        self.bridge = None
+
+    def pull_status(self):
+        if not self.browser:
+            return
+            
+        js_code = """
+        (function() {
+            const rows = document.querySelectorAll("table.formTable tr");
+            let found = false;
+
+            for (const row of rows) {
+                const label = row.querySelector("td.formLabel");
+                if (label && label.textContent.trim() === "Design Status") {
+                    const value = label.nextElementSibling?.textContent.trim() || "";
+                    found = true;
+
+                    if (value.toLowerCase().includes("design approved")) {
+                        bridge.receiveStatus("✅ Design Approved | PID: 5977618 | Node: D209 - D209");
+                    } else {
+                        bridge.receiveStatus("⚠️ Not Approved – Use dropdown");
+                    }
+                    return;
+                }
+            }
+
+            // If design status row not found at all:
+            if (!found) {
+                bridge.receiveStatus("IN_PROGRESS_FALLBACK");
+            }
+        })();
+        """
+        self.browser.page().runJavaScript(js_code)
 
 class ExcelAutomationApp(QMainWindow):
     def __init__(self):
@@ -20,85 +111,92 @@ class ExcelAutomationApp(QMainWindow):
         # Layout
         layout = QGridLayout()
 
-        # Load Excel Button
+        # Top row - Browser controls
+        browser_label = QLabel("Browser:")
+        layout.addWidget(browser_label, 0, 0)
+        
+        self.browser_dropdown = QComboBox()
+        self.browser_dropdown.addItems(["Edge", "Chrome"])
+        layout.addWidget(self.browser_dropdown, 0, 1)
+
+        self.open_browser_button = QPushButton("Open Browser")
+        self.open_browser_button.clicked.connect(self.open_browser)
+        layout.addWidget(self.open_browser_button, 0, 2)
+
+        # Second row - Excel controls
         self.load_button = QPushButton("Load Excel File")
         self.load_button.clicked.connect(self.load_excel)
-        layout.addWidget(self.load_button, 0, 0)
+        layout.addWidget(self.load_button, 1, 0, 1, 3)  # Span 3 columns
 
-        # PID Inputs
+        # PID Inputs - Start from row 2
         self.pid_inputs = [QLineEdit() for _ in range(4)]
         for i, pid_input in enumerate(self.pid_inputs):
             pid_input.setPlaceholderText(f"PID {i + 1}")
-            layout.addWidget(pid_input, 1, i)
+            layout.addWidget(pid_input, 2, i)
 
         # Node Inputs
         self.node_inputs = [QLineEdit() for _ in range(4)]
         for i, node_input in enumerate(self.node_inputs):
             node_input.setPlaceholderText(f"Node {i + 1}")
-            layout.addWidget(node_input, 2, i)
+            layout.addWidget(node_input, 3, i)
 
         # Scope Inputs
         self.scope_inputs = [QLineEdit() for _ in range(4)]
         for i, scope_input in enumerate(self.scope_inputs):
             scope_input.setPlaceholderText(f"Scope {i + 1}")
-            layout.addWidget(scope_input, 3, i)
+            layout.addWidget(scope_input, 4, i)
 
         # Magellan Inputs
         self.magellan_inputs = [QLineEdit() for _ in range(4)]
         for i, magellan_input in enumerate(self.magellan_inputs):
             magellan_input.setPlaceholderText(f"Magellan {i + 1}")
-            layout.addWidget(magellan_input, 4, i)
+            layout.addWidget(magellan_input, 5, i)
 
-        # Config Dropdown
+        # Config and Build State row
         self.config_dropdown = QComboBox()
         self.config_dropdown.addItems(["1x1", "2x2", "4x4", "N/A"])
-        layout.addWidget(self.config_dropdown, 5, 0)
+        layout.addWidget(self.config_dropdown, 6, 0)
 
-        # Build State Dropdown
         self.build_state_dropdown = QComboBox()
         self.build_state_dropdown.setEditable(True)
         self.build_state_dropdown.addItems(["In Design", "In Progress", "Does Not Exist", "PRO-I", "Design Approved"])
-        layout.addWidget(self.build_state_dropdown, 5, 1)
+        layout.addWidget(self.build_state_dropdown, 6, 1, 1, 3)  # Span 3 columns
 
-        # Save & Next Button
+        # Action buttons row
         self.save_next_button = QPushButton("Save & Next")
         self.save_next_button.clicked.connect(self.save_next_action)
-        layout.addWidget(self.save_next_button, 6, 0)
+        layout.addWidget(self.save_next_button, 7, 0)
 
-        # Back Button
         self.back_button = QPushButton("Back")
         self.back_button.clicked.connect(self.load_previous_row)
-        layout.addWidget(self.back_button, 6, 1)
-        
-        self.current_row = None
+        layout.addWidget(self.back_button, 7, 1)
 
-        # Status Label
+        self.toggle_dark_mode_button = QPushButton("Toggle Dark Mode")
+        self.toggle_dark_mode_button.clicked.connect(self.toggle_dark_mode)
+        layout.addWidget(self.toggle_dark_mode_button, 7, 2, 1, 2)  # Span 2 columns
+
+        # Status labels
         self.status_label = QLabel("No file loaded.")
-        layout.addWidget(self.status_label, 7, 0, 1, 3)
+        layout.addWidget(self.status_label, 8, 0, 1, 4)  # Span all columns
 
         self.last_node_label = QLabel("Last Node: N/A")
-        layout.addWidget(self.last_node_label, 8, 0, 1, 3)
+        layout.addWidget(self.last_node_label, 9, 0, 1, 4)  # Span all columns
 
-        # Row Input and Go Button
+        # Row navigation
         self.row_input = QLineEdit()
         self.row_input.setPlaceholderText("Enter row #")
-        layout.addWidget(self.row_input, 9, 0)
+        layout.addWidget(self.row_input, 10, 0)
 
         self.go_button = QPushButton("Go to Row")
         self.go_button.clicked.connect(self.load_specific_row)
-        layout.addWidget(self.go_button, 9, 1)
+        layout.addWidget(self.go_button, 10, 1)
 
         self.open_excel_button = QPushButton("Open in Excel (Read-Only)")
         self.open_excel_button.clicked.connect(self.open_excel_readonly)
-        layout.addWidget(self.open_excel_button, 10, 0)
-        
-        self.current_row_label = QLabel("Current Row: N/A")
-        layout.addWidget(self.current_row_label, 11, 0, 1, 3)
+        layout.addWidget(self.open_excel_button, 10, 2, 1, 2)  # Span 2 columns
 
-        # Toggle Dark Mode Button
-        self.toggle_dark_mode_button = QPushButton("Toggle Dark Mode")
-        self.toggle_dark_mode_button.clicked.connect(self.toggle_dark_mode)
-        layout.addWidget(self.toggle_dark_mode_button, 6, 2)
+        self.current_row_label = QLabel("Current Row: N/A")
+        layout.addWidget(self.current_row_label, 11, 0, 1, 4)  # Span all columns
 
         # Main Widget
         container = QWidget()
@@ -408,6 +506,25 @@ class ExcelAutomationApp(QMainWindow):
         current_palette = QApplication.instance().palette()
         is_dark_mode = current_palette.color(QPalette.Window).lightness() < 128
         self.setup_theme(not is_dark_mode)  # Toggle the theme
+
+    def open_browser(self):
+        selected_browser = self.browser_dropdown.currentText().lower()
+        
+        # =============================================
+        # PRISM URL CONFIGURATION
+        # Update this URL to match your work environment
+        # Make sure you're connected to work VPN if accessing remotely
+        # =============================================
+        prism_url = "https://prism.charte.com/prism/prism-welcome.action"
+        
+        if selected_browser == "edge":
+            # For Edge, we'll use the system's default browser registration
+            webbrowser.register('edge', None, webbrowser.GenericBrowser('open -a "Microsoft Edge" %s'))
+            webbrowser.get('edge').open(prism_url)
+        elif selected_browser == "chrome":
+            # For Chrome, we'll use the system's default browser registration
+            webbrowser.register('chrome', None, webbrowser.GenericBrowser('open -a "Google Chrome" %s'))
+            webbrowser.get('chrome').open(prism_url)
 
 # Run the app
 if __name__ == "__main__":
