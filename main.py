@@ -2,7 +2,7 @@ import sys
 import json
 import os
 import webbrowser
-from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QFileDialog, QLabel, QTextEdit, QComboBox, QGridLayout, QLineEdit
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QFileDialog, QLabel, QTextEdit, QComboBox, QGridLayout, QLineEdit
 from PyQt5.QtWidgets import QMessageBox, QStyleFactory
 from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtCore import Qt, pyqtSlot, QUrl, QTimer, QObject
@@ -489,7 +489,44 @@ class ExcelAutomationApp(QMainWindow):
             
             # Create and set up web view
             self.web_view = QWebEngineView()
-            self.browser_window.setCentralWidget(self.web_view)
+            
+            # Create main widget and layout for browser window
+            main_widget = QWidget()
+            layout = QVBoxLayout()
+            main_widget.setLayout(layout)
+            
+            # Navigation bar
+            nav_bar = QHBoxLayout()
+            self.url_input = QLineEdit()
+            self.url_input.setPlaceholderText("Enter URL")
+            self.url_input.setText("https://www.google.com")
+            
+            go_button = QPushButton("Go")
+            go_button.clicked.connect(self.navigate_to_url)
+            
+            back_button = QPushButton("◀")
+            back_button.clicked.connect(lambda: self.web_view.back())
+            
+            forward_button = QPushButton("▶")
+            forward_button.clicked.connect(lambda: self.web_view.forward())
+            
+            reload_button = QPushButton("⟳")
+            reload_button.clicked.connect(lambda: self.web_view.reload())
+            
+            home_button = QPushButton("🏠")
+            home_button.clicked.connect(lambda: self.web_view.setUrl(QUrl("https://www.google.com")))
+            
+            nav_bar.addWidget(back_button)
+            nav_bar.addWidget(forward_button)
+            nav_bar.addWidget(reload_button)
+            nav_bar.addWidget(home_button)
+            nav_bar.addWidget(self.url_input)
+            nav_bar.addWidget(go_button)
+            
+            layout.addLayout(nav_bar)
+            layout.addWidget(self.web_view)
+            
+            self.browser_window.setCentralWidget(main_widget)
             
             # Create bridge and expose to JavaScript
             self.bridge = Bridge(self)
@@ -512,6 +549,12 @@ class ExcelAutomationApp(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to open browser: {str(e)}")
             print(f"Error opening browser: {str(e)}")
             traceback.print_exc()
+
+    def navigate_to_url(self):
+        url = self.url_input.text().strip()
+        if not url.startswith("http"):
+            url = "https://" + url
+        self.web_view.setUrl(QUrl(url))
 
     def check_status(self):
         """Periodically check the design status"""
