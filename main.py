@@ -550,20 +550,39 @@ class ExcelAutomationApp(QMainWindow):
             nav_bar.addWidget(go_button)
             layout.addLayout(nav_bar)
             layout.addWidget(self.web_view)
-            # Add manual scrape button for debugging
             scrape_button = QPushButton("Scrape Now")
             scrape_button.clicked.connect(self.check_status)
             layout.addWidget(scrape_button)
+            # Add Show Page Source button
+            show_source_button = QPushButton("Show Page Source")
+            def show_source():
+                self.web_view.page().toHtml(lambda html: self.show_dark_messagebox(QMessageBox.Information, "Page Source", html[:2000] + ("\n...truncated..." if len(html) > 2000 else "")))
+            show_source_button.clicked.connect(show_source)
+            layout.addWidget(show_source_button)
             self.browser_window.setCentralWidget(main_widget)
-            # WebChannel setup BEFORE loading the page
             self.bridge = Bridge(self)
             self.web_view.page().setWebChannel(self.channel)
             self.channel.registerObject('bridge', self.bridge)
-            # Load the page
+            # Inject the Qt WebChannel JS so window.bridge is available
+            self.web_view.page().runJavaScript('''
+                if (!window.qt) {
+                    var s = document.createElement('script');
+                    s.src = 'qrc:///qtwebchannel/qwebchannel.js';
+                    s.onload = function() {
+                        new QWebChannel(qt.webChannelTransport, function(channel) {
+                            window.bridge = channel.objects.bridge;
+                        });
+                    };
+                    document.head.appendChild(s);
+                } else {
+                    new QWebChannel(qt.webChannelTransport, function(channel) {
+                        window.bridge = channel.objects.bridge;
+                    });
+                }
+            ''')
             prism_url = "https://www.google.com"
             self.web_view.setUrl(QUrl(prism_url))
             self.web_view.loadFinished.connect(self.inject_dark_css_if_needed)
-            # Timer for auto-scraping
             self.timer = QTimer()
             self.timer.timeout.connect(self.check_status)
             self.timer.start(5000)
@@ -641,8 +660,9 @@ class ExcelAutomationApp(QMainWindow):
                 }
                 return 'IN_PROGRESS_FALLBACK';
             }
-            if (typeof bridge !== 'undefined') {
-                bridge.receiveStatus(extractStatus());
+            console.log('JS running, window.bridge is', typeof window.bridge);
+            if (typeof window.bridge !== 'undefined') {
+                window.bridge.receiveStatus(extractStatus());
             }
         })();
         """
