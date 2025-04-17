@@ -5,105 +5,77 @@ import webbrowser
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QPushButton, QFileDialog, QLabel, QTextEdit, QComboBox, QGridLayout, QLineEdit
 from PyQt5.QtWidgets import QMessageBox, QStyleFactory
 from PyQt5.QtGui import QPalette, QColor
-from PyQt5.QtCore import Qt, pyqtSlot, QUrl
+from PyQt5.QtCore import Qt, pyqtSlot, QUrl, QTimer, QObject
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from openpyxl import load_workbook
 import traceback
+from PyQt5.QtWebChannel import QWebChannel
 
-class Bridge:
-    def __init__(self, parent=None):
+class Bridge(QObject):
+    def __init__(self, main_window):
         super().__init__()
-        self.parent = lambda: parent
-        self.status_label = parent.status_label if parent else None
+        self.main_window = main_window
 
     @pyqtSlot(str)
     def receiveStatus(self, status):
-        if not self.status_label:
+        """Receive status updates from JavaScript"""
+        self.main_window.status_label.setText(status)
+        
+        # Handle fallback case
+        if status == 'IN_PROGRESS_FALLBACK':
+            self.main_window.build_state_dropdown.setCurrentText("In Progress")
+            self.main_window.status_label.setText("⚠️ Design tab not found – set to In Progress")
+            if hasattr(self.main_window, 'timer'):
+                self.main_window.timer.stop()
             return
             
-        self.status_label.setText(f"Design Status: {status}")
-
-        # Case 1: Design Approved
-        if self.parent() and hasattr(self.parent(), 'design_approved_detected'):
-            if status == "✅ Design Approved":
-                self.parent().design_approved_detected.emit()
-
-        # Case 2: Design tab missing (fallback)
-        if status == "IN_PROGRESS_FALLBACK":
-            dropdown = self.parent().build_state_dropdown
-            index = dropdown.findText("In Progress")
-            if index != -1:
-                dropdown.setCurrentIndex(index)
-            else:
-                dropdown.addItem("In Progress")
-                dropdown.setCurrentText("In Progress")
-            self.status_label.setText("⚠️ Design tab not found — defaulted to In Progress")
-
-        # Case 3: Structured status with PID + Node
-        if "|" in status:
-            # Expecting: "✅ Design Approved | PID: 123456 | Node: D209 - D209"
-            parts = status.split("|")
-            pid_value = ""
-            node_value = ""
-
-            for part in parts:
-                if "PID:" in part:
-                    pid_value = part.split("PID:")[1].strip()
-                elif "Node:" in part:
-                    node_value = part.split("Node:")[1].strip()
-
-            # Fill first empty PID + Node field
-            for i in range(4):
-                if not self.parent().pid_inputs[i].text().strip():
-                    self.parent().pid_inputs[i].setText(pid_value)
-                    self.parent().node_inputs[i].setText(node_value)
-                    break
-
-class PrismBrowser(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Prism Browser")
-        self.setGeometry(100, 100, 1200, 800)
-        self.browser = None
-        self.bridge = None
-
-    def pull_status(self):
-        if not self.browser:
-            return
-            
-        js_code = """
-        (function() {
-            const rows = document.querySelectorAll("table.formTable tr");
-            let found = false;
-
-            for (const row of rows) {
-                const label = row.querySelector("td.formLabel");
-                if (label && label.textContent.trim() === "Design Status") {
-                    const value = label.nextElementSibling?.textContent.trim() || "";
-                    found = true;
-
-                    if (value.toLowerCase().includes("design approved")) {
-                        bridge.receiveStatus("✅ Design Approved | PID: 5977618 | Node: D209 - D209");
-                    } else {
-                        bridge.receiveStatus("⚠️ Not Approved – Use dropdown");
-                    }
-                    return;
-                }
-            }
-
-            // If design status row not found at all:
-            if (!found) {
-                bridge.receiveStatus("IN_PROGRESS_FALLBACK");
-            }
-        })();
-        """
-        self.browser.page().runJavaScript(js_code)
+        # If design is approved, update the Excel file
+        if "✅ Design Approved" in status:
+            try:
+                # Extract PID and Node from status message
+                pid_match = status.split("PID:")[1].split("|")[0].strip()
+                node_match = status.split("Node:")[1].strip()
+                
+                # Find matching PID input field or first empty one
+                pid_updated = False
+                for i, pid_input in enumerate(self.main_window.pid_inputs):
+                    if pid_input.text().strip() == pid_match:
+                        # Update the corresponding node input
+                        self.main_window.node_inputs[i].setText(node_match)
+                        # Set build state to "Design Approved"
+                        self.main_window.build_state_dropdown.setCurrentText("Design Approved")
+                        pid_updated = True
+                        break
+                
+                # If no match found, fill the first empty PID field
+                if not pid_updated:
+                    for i, pid_input in enumerate(self.main_window.pid_inputs):
+                        if not pid_input.text().strip():
+                            pid_input.setText(pid_match)
+                            self.main_window.node_inputs[i].setText(node_match)
+                            self.main_window.build_state_dropdown.setCurrentText("Design Approved")
+                            pid_updated = True
+                            break
+                
+                if pid_updated:
+                    # Update Excel with approval status
+                    self.main_window.update_excel(pid_match, node_match)
+                    # Stop the timer since we found a successful status
+                    if hasattr(self.main_window, 'timer'):
+                        self.main_window.timer.stop()
+                
+            except Exception as e:
+                print(f"Error updating Excel: {str(e)}")
+                traceback.print_exc()
 
 class ExcelAutomationApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Excel Automation App")
         self.setGeometry(100, 100, 800, 500)  # Increased window size
+        
+        # Initialize WebChannel for JavaScript-Python communication
+        self.channel = QWebChannel()
         
         # Set up theme
         self.setup_theme()
@@ -508,59 +480,86 @@ class ExcelAutomationApp(QMainWindow):
         self.setup_theme(not is_dark_mode)  # Toggle the theme
 
     def open_browser(self):
+        """Open a new browser window with the specified URL"""
         try:
-            selected_browser = self.browser_dropdown.currentText().lower()
+            # Create browser window
+            self.browser_window = QMainWindow()
+            self.browser_window.setWindowTitle("Design Review")
+            self.browser_window.resize(1200, 800)
             
-            # =============================================
-            # PRISM URL CONFIGURATION
-            # Update this URL to match your work environment
-            # Make sure you're connected to work VPN if accessing remotely
-            # =============================================
-            prism_url = "https://prism.charte.com/prism/prism-welcome.action"
+            # Create and set up web view
+            self.web_view = QWebEngineView()
+            self.browser_window.setCentralWidget(self.web_view)
             
-            # Detect operating system
-            is_windows = sys.platform.startswith('win')
+            # Create bridge and expose to JavaScript
+            self.bridge = Bridge(self)
+            self.web_view.page().setWebChannel(self.channel)
+            self.channel.registerObject('bridge', self.bridge)
             
-            if selected_browser == "edge":
-                try:
-                    if is_windows:
-                        # Windows command for Edge
-                        os.system(f'start msedge "{prism_url}"')
-                    else:
-                        # macOS command for Edge
-                        os.system(f'open -a "Microsoft Edge" "{prism_url}"')
-                except Exception as e:
-                    # Fallback to webbrowser module
-                    if is_windows:
-                        edge_path = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
-                        webbrowser.register('edge', None, webbrowser.BackgroundBrowser(edge_path))
-                    else:
-                        webbrowser.register('edge', None)
-                    webbrowser.get('edge').open(prism_url)
-                    
-            elif selected_browser == "chrome":
-                try:
-                    if is_windows:
-                        # Windows command for Chrome
-                        os.system(f'start chrome "{prism_url}"')
-                    else:
-                        # macOS command for Chrome
-                        os.system(f'open -a "Google Chrome" "{prism_url}"')
-                except Exception as e:
-                    # Fallback to webbrowser module
-                    if is_windows:
-                        chrome_path = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-                        webbrowser.register('chrome', None, webbrowser.BackgroundBrowser(chrome_path))
-                    else:
-                        webbrowser.register('chrome', None)
-                    webbrowser.get('chrome').open(prism_url)
+            # Load PRISM URL
+            prism_url = "https://www.google.com"
+            self.web_view.setUrl(QUrl(prism_url))
             
-            self.status_label.setText(f"Opening {selected_browser.title()}...")
+            # Set up periodic status check
+            self.timer = QTimer()
+            self.timer.timeout.connect(self.check_status)
+            self.timer.start(5000)  # Check every 5 seconds
+            
+            # Show browser window
+            self.browser_window.show()
             
         except Exception as e:
-            error_msg = f"Failed to open browser: {str(e)}"
-            self.status_label.setText(error_msg)
-            QMessageBox.critical(self, "Browser Error", error_msg)
+            QMessageBox.critical(self, "Error", f"Failed to open browser: {str(e)}")
+            print(f"Error opening browser: {str(e)}")
+            traceback.print_exc()
+
+    def check_status(self):
+        """Periodically check the design status"""
+        js_code = """
+        (function() {
+            function extractStatus() {
+                // Find all form labels and their values
+                const labels = document.querySelectorAll('td.formLabel');
+                let pid = '';
+                let node = '';
+                let status = '';
+                
+                for (const label of labels) {
+                    const labelText = label.textContent.trim();
+                    const valueCell = label.nextElementSibling;
+                    const value = valueCell ? valueCell.textContent.trim() : '';
+                    
+                    if (labelText.includes('PID')) {
+                        pid = value;
+                    } else if (labelText.includes('Node')) {
+                        node = value;
+                    } else if (labelText.includes('Design Status')) {
+                        status = value;
+                    }
+                }
+                
+                // Check if we found all required information
+                if (pid && node) {
+                    if (status.toLowerCase().includes('design approved')) {
+                        return `✅ Design Approved | PID: ${pid} | Node: ${node}`;
+                    } else if (status.toLowerCase().includes('in progress')) {
+                        return `⏳ Design In Progress | PID: ${pid} | Node: ${node}`;
+                    } else if (status.toLowerCase().includes('rejected')) {
+                        return `❌ Design Rejected | PID: ${pid} | Node: ${node}`;
+                    }
+                }
+                
+                // Fallback if we can't find the design tab
+                return 'IN_PROGRESS_FALLBACK';
+            }
+            
+            // Send status back to Python
+            if (typeof bridge !== 'undefined') {
+                bridge.receiveStatus(extractStatus());
+            }
+        })();
+        """
+        self.web_view.page().runJavaScript(js_code)
 
 # Run the app
 if __name__ == "__main__":
