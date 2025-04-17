@@ -1,6 +1,6 @@
 # NodeAudit Excel Automation Tool
 
-A PyQt5-based desktop application for managing and automating Excel data entry with PRISM integration.
+A PySide6-based desktop application for managing and automating Excel data entry with PRISM integration.
 
 ## Features
 
@@ -18,7 +18,7 @@ A PyQt5-based desktop application for managing and automating Excel data entry w
 - Python 3.7+
 - Microsoft Edge or Google Chrome browser
 - Required Python packages (see requirements.txt)
-- PyQtWebEngine for browser integration
+- PySide6 and PySide6-WebEngine for browser integration
 - Active network connection for PRISM access
 
 ## Installation
@@ -102,4 +102,4 @@ Feel free to submit issues and enhancement requests. Pull requests are welcome:
 2. Create your feature branch
 3. Commit your changes
 4. Push to the branch
-5. Create a new Pull Request 
+5. Create a new Pull Request

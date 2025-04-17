@@ -2,10 +2,9 @@ import sys
 import json
 import os
 import webbrowser
-from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QFileDialog, QLabel, QTextEdit, QComboBox, QGridLayout, QLineEdit
-from PyQt5.QtWidgets import QMessageBox, QStyleFactory
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QFileDialog, QLabel, QTextEdit, QComboBox, QGridLayout, QLineEdit, QMessageBox, QStyleFactory
 from PyQt5.QtGui import QPalette, QColor
-from PyQt5.QtCore import Qt, pyqtSlot, QUrl, QTimer, QObject
+from PyQt5.QtCore import Qt, pyqtSlot, pyqtSignal, QUrl, QTimer, QObject
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from openpyxl import load_workbook
 import traceback
@@ -18,7 +17,10 @@ class Bridge(QObject):
 
     @pyqtSlot(str)
     def receiveStatus(self, status):
-        """Receive status updates from JavaScript"""
+        print("[Web Scraping Debug] Received status:", status)  # Debug print
+        # Update the browser window's status label for user feedback
+        if hasattr(self.main_window, 'browser_status_label'):
+            self.main_window.browser_status_label.setText(f"Web Scraping Status: {status}")
         self.main_window.status_label.setText(status)
         
         # Handle fallback case
@@ -124,15 +126,22 @@ class ExcelAutomationApp(QMainWindow):
             magellan_input.setPlaceholderText(f"Magellan {i + 1}")
             layout.addWidget(magellan_input, 5, i)
 
-        # Config and Build State row
+        # Config and Build State row (use QHBoxLayout for perfect alignment)
+        config_build_row = QHBoxLayout()
         self.config_dropdown = QComboBox()
         self.config_dropdown.addItems(["1x1", "2x2", "4x4", "N/A"])
-        layout.addWidget(self.config_dropdown, 6, 0)
+        self.config_dropdown.setMinimumWidth(180)
+        self.config_dropdown.setMaximumWidth(180)
+        config_build_row.addWidget(self.config_dropdown)
 
         self.build_state_dropdown = QComboBox()
         self.build_state_dropdown.setEditable(True)
         self.build_state_dropdown.addItems(["In Design", "In Progress", "Does Not Exist", "PRO-I", "Design Approved"])
-        layout.addWidget(self.build_state_dropdown, 6, 1, 1, 3)  # Span 3 columns
+        self.build_state_dropdown.setMinimumWidth(180)
+        self.build_state_dropdown.setMaximumWidth(180)
+        config_build_row.addWidget(self.build_state_dropdown)
+
+        layout.addLayout(config_build_row, 6, 0, 1, 4)
 
         # Action buttons row
         self.save_next_button = QPushButton("Save & Next")
@@ -240,6 +249,34 @@ class ExcelAutomationApp(QMainWindow):
 
         app.setPalette(palette)
 
+    def show_dark_messagebox(self, icon, title, text):
+        msg = QMessageBox(self)
+        msg.setIcon(icon)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        if QApplication.instance().palette().color(QPalette.Window).lightness() < 128:
+            # Dark mode: set dark palette and style
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #353535;
+                    color: white;
+                }
+                QPushButton {
+                    background-color: #454545;
+                    color: white;
+                    border: 1px solid #555555;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #555555;
+                }
+                QPushButton:pressed {
+                    background-color: #252525;
+                }
+            """)
+        msg.exec_()
+
     def load_excel(self):
         # Open file dialog to select Excel file
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Excel File", "", "Excel Files (*.xlsx *.xls)")
@@ -251,9 +288,9 @@ class ExcelAutomationApp(QMainWindow):
                 
                 self.excel_file_path = file_path
                 self.status_label.setText(f"Loaded: {file_path}")
-                QMessageBox.information(self, "Excel Loaded", f"Loaded: {os.path.basename(file_path)}")
+                self.show_dark_messagebox(QMessageBox.Information, "Excel Loaded", f"Loaded: {os.path.basename(file_path)}")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load Excel file: {str(e)}")
+                self.show_dark_messagebox(QMessageBox.Critical, "Error", f"Failed to load Excel file: {str(e)}")
 
     def save_next_action(self):
         if not self.excel_file_path:
@@ -328,7 +365,7 @@ class ExcelAutomationApp(QMainWindow):
             self.status_label.setText(f"Saved row {row}")
 
             workbook.save(self.excel_file_path)
-            QMessageBox.information(self, "Saved", f"Row {row} saved successfully!")
+            self.show_dark_messagebox(QMessageBox.Information, "Saved", f"Row {row} saved successfully!")
 
             # Clear inputs
             for input_list in [self.pid_inputs, self.scope_inputs, self.magellan_inputs, self.node_inputs]:
@@ -342,7 +379,7 @@ class ExcelAutomationApp(QMainWindow):
             self.current_row = row + 1
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save data: {str(e)}")
+            self.show_dark_messagebox(QMessageBox.Critical, "Error", f"Failed to save data: {str(e)}")
             traceback.print_exc()
 
     def load_previous_row(self):
@@ -366,7 +403,7 @@ class ExcelAutomationApp(QMainWindow):
             self.current_row_label.setText(f"Current Row: {self.current_row}")
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load previous row: {str(e)}")
+            self.show_dark_messagebox(QMessageBox.Critical, "Error", f"Failed to load previous row: {str(e)}")
 
     def load_specific_row(self):
         if not self.excel_file_path:
@@ -384,7 +421,7 @@ class ExcelAutomationApp(QMainWindow):
             sheet = workbook.active
 
             if target_row == 1:
-                QMessageBox.information(self, "Invalid Row", "Row 1 contains headers and cannot be edited.")
+                self.show_dark_messagebox(QMessageBox.Information, "Invalid Row", "Row 1 contains headers and cannot be edited.")
                 self.status_label.setText("Row 1 contains headers and cannot be edited.")
                 return
             elif target_row < 2 or target_row > sheet.max_row:
@@ -400,7 +437,7 @@ class ExcelAutomationApp(QMainWindow):
             self.current_row_label.setText(f"Current Row: {self.current_row}")
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load row {target_row}: {str(e)}")
+            self.show_dark_messagebox(QMessageBox.Critical, "Error", f"Failed to load row {target_row}: {str(e)}")
 
     def load_row_data(self, sheet, headers):
         """Helper method to load data from the current row into the input fields"""
@@ -472,7 +509,7 @@ class ExcelAutomationApp(QMainWindow):
             self.status_label.setText("Opened Excel in read-only mode.")
         except Exception as e:
             self.status_label.setText(f"Failed to open Excel: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to open Excel: {str(e)}")
+            self.show_dark_messagebox(QMessageBox.Critical, "Error", f"Failed to open Excel: {str(e)}")
 
     def toggle_dark_mode(self):
         current_palette = QApplication.instance().palette()
@@ -480,75 +517,114 @@ class ExcelAutomationApp(QMainWindow):
         self.setup_theme(not is_dark_mode)  # Toggle the theme
 
     def open_browser(self):
-        """Open a new browser window with the specified URL"""
         try:
-            # Create browser window
             self.browser_window = QMainWindow()
             self.browser_window.setWindowTitle("Design Review")
             self.browser_window.resize(1200, 800)
-            
-            # Create and set up web view
             self.web_view = QWebEngineView()
-            
-            # Create main widget and layout for browser window
             main_widget = QWidget()
             layout = QVBoxLayout()
             main_widget.setLayout(layout)
-            
-            # Navigation bar
+            self.browser_status_label = QLabel("Web Scraping Status: (waiting)")
+            self.browser_status_label.setStyleSheet("background: #222; color: #fff; padding: 4px; font-weight: bold;")
+            layout.addWidget(self.browser_status_label)
             nav_bar = QHBoxLayout()
             self.url_input = QLineEdit()
             self.url_input.setPlaceholderText("Enter URL")
             self.url_input.setText("https://www.google.com")
-            
             go_button = QPushButton("Go")
             go_button.clicked.connect(self.navigate_to_url)
-            
             back_button = QPushButton("◀")
             back_button.clicked.connect(lambda: self.web_view.back())
-            
             forward_button = QPushButton("▶")
             forward_button.clicked.connect(lambda: self.web_view.forward())
-            
             reload_button = QPushButton("⟳")
             reload_button.clicked.connect(lambda: self.web_view.reload())
-            
             home_button = QPushButton("🏠")
             home_button.clicked.connect(lambda: self.web_view.setUrl(QUrl("https://www.google.com")))
-            
             nav_bar.addWidget(back_button)
             nav_bar.addWidget(forward_button)
             nav_bar.addWidget(reload_button)
             nav_bar.addWidget(home_button)
             nav_bar.addWidget(self.url_input)
             nav_bar.addWidget(go_button)
-            
             layout.addLayout(nav_bar)
             layout.addWidget(self.web_view)
-            
             self.browser_window.setCentralWidget(main_widget)
-            
-            # Create bridge and expose to JavaScript
+            # Apply dark mode to browser window controls if enabled
+            if QApplication.instance().palette().color(QPalette.Window).lightness() < 128:
+                self.browser_window.setStyleSheet("""
+                    QMainWindow, QWidget {
+                        background-color: #232323;
+                        color: #fff;
+                    }
+                    QLabel {
+                        color: #fff;
+                    }
+                    QLineEdit {
+                        background-color: #353535;
+                        color: white;
+                        border: 1px solid #555555;
+                        padding: 5px;
+                    }
+                    QPushButton {
+                        background-color: #454545;
+                        color: white;
+                        border: 1px solid #555555;
+                        padding: 5px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #555555;
+                    }
+                    QPushButton:pressed {
+                        background-color: #252525;
+                    }
+                """)
             self.bridge = Bridge(self)
             self.web_view.page().setWebChannel(self.channel)
             self.channel.registerObject('bridge', self.bridge)
-            
-            # Load PRISM URL
             prism_url = "https://www.google.com"
             self.web_view.setUrl(QUrl(prism_url))
-            
-            # Set up periodic status check
+            self.web_view.loadFinished.connect(self.inject_dark_css_if_needed)
             self.timer = QTimer()
             self.timer.timeout.connect(self.check_status)
-            self.timer.start(5000)  # Check every 5 seconds
-            
-            # Show browser window
+            self.timer.start(5000)
             self.browser_window.show()
-            
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open browser: {str(e)}")
             print(f"Error opening browser: {str(e)}")
             traceback.print_exc()
+
+    def inject_dark_css_if_needed(self):
+        if QApplication.instance().palette().color(QPalette.Window).lightness() < 128:
+            dark_css = """
+                html, body {
+                    background: #232323 !important;
+                    color: #eee !important;
+                }
+                table, td, th {
+                    background: #232323 !important;
+                    color: #eee !important;
+                    border-color: #444 !important;
+                }
+                input, textarea, select {
+                    background: #353535 !important;
+                    color: #fff !important;
+                    border: 1px solid #555 !important;
+                }
+                a { color: #8ecfff !important; }
+            """
+            js = f"""
+                var style = document.getElementById('darkmode-style');
+                if (!style) {{
+                    style = document.createElement('style');
+                    style.id = 'darkmode-style';
+                    style.innerHTML = `{dark_css}`;
+                    document.head.appendChild(style);
+                }}
+            """
+            self.web_view.page().runJavaScript(js)
 
     def navigate_to_url(self):
         url = self.url_input.text().strip()
